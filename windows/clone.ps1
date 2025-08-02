@@ -18,7 +18,7 @@ if ($Env:DRONE_NETRC_MACHINE) {
 machine $Env:DRONE_NETRC_MACHINE
 login $Env:DRONE_NETRC_USERNAME
 password $Env:DRONE_NETRC_PASSWORD
-"@ > (Join-Path $Env:USERPROFILE '_netrc');
+"@ | Out-File -FilePath (Join-Path $Env:USERPROFILE '_netrc') -Force -Encoding ASCII
 }
 
 if ($Env:DRONE_SSH_KEY) {
