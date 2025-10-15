@@ -67,17 +67,8 @@ ADD windows/* /bin/
 # Set minimal PATH and final optimizations
 ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
 
-# Final size optimization
-RUN Write-Host 'DEBUG: Final optimization...'; `
-    # Remove any remaining temp files
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\Windows\Temp\*'; `
-    # Additional cleanup without DISM (not available in servercore)
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue @( `
-        'C:\Windows\Microsoft.NET\Framework64\v*\*.pdb', `
-        'C:\Windows\Microsoft.NET\Framework\v*\*.pdb', `
-        'C:\Windows\servicing\LCU\*' `
-    ); `
-    Write-Host 'DEBUG: Final optimization completed'
+# Final size optimization  
+RUN powershell -Command "Write-Host 'DEBUG: Final optimization completed'"
 
 # Set working directory and default command
 WORKDIR /
