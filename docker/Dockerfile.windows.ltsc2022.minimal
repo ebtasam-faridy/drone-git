@@ -1,0 +1,43 @@
+# escape=`
+
+# Minimal approach: Use servercore but install only what's needed
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install OpenSSH Client and download Git in single optimized layer
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    # Install OpenSSH Client
+    Write-Host 'Installing OpenSSH Client...'; `
+    Add-WindowsCapability -Online -Name OpenSSH.Client*; `
+    # Download and install Git + Git LFS
+    Write-Host 'Downloading Git and Git LFS...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
+    # Extract Git
+    Write-Host 'Extracting Git...'; `
+    Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
+    # Extract Git LFS
+    Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
+    # Setup Git LFS
+    if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
+    $lfsExe = Get-ChildItem -Path 'git-lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
+    if ($lfsExe) { Copy-Item "git-lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe' }; `
+    # Cleanup downloads and unnecessary components
+    Remove-Item -Force 'git.zip', 'git-lfs.zip'; `
+    Remove-Item -Recurse -Force 'git-lfs-temp'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc', 'C:\git\usr\share\info', 'C:\git\usr\share\man', 'C:\git\usr\share\locale'; `
+    # Verify installations
+    Write-Host 'Verifying installations...'; `
+    & 'C:\git\cmd\git.exe' --version; `
+    & 'C:\git\cmd\git-lfs.exe' version; `
+    & 'C:\Windows\System32\OpenSSH\ssh.exe' -V
+
+# Add drone-git scripts
+ADD windows/* /bin/
+
+# Configure PATH to include Git and OpenSSH
+ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
+
+# Set working directory and default command
+WORKDIR /
+CMD [ "powershell", "C:\\bin\\clone.ps1" ]

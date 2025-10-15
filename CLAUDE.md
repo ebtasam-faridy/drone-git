@@ -33,6 +33,21 @@ cd posix && tar -xf fixtures.tar -C / && go test -v
 go run main.go  # Uses current OS-specific scripts
 ```
 
+### Script Generation (Critical)
+```bash
+# Regenerate embedded scripts after modifying shell/PowerShell files
+cd posix && go generate
+cd windows && go generate
+
+# Or manually:
+go run scripts/includetext.go --input=posix/clone --input=posix/clone-commit --input=posix/clone-pull-request --input=posix/clone-tag --package=posix --output=posix/posix_gen.go
+
+go run scripts/includetext.go --input=windows/clone.ps1 --input=windows/clone-commit.ps1 --input=windows/clone-pull-request.ps1 --input=windows/clone-tag.ps1 --package=windows --output=windows/windows_gen.go
+
+# Verify generated files are up-to-date
+git diff posix/posix_gen.go windows/windows_gen.go
+```
+
 ### Docker Development
 ```bash
 # Build single-platform image (Linux AMD64)
@@ -62,6 +77,31 @@ drone starlark --format .drone.starlark
 
 # Lint/validate Drone config
 drone lint .drone.yml
+```
+
+### Debugging Commands
+```bash
+# Test script extraction without running git operations
+DRONE_WORKSPACE=/tmp/test DRONE_REMOTE_URL=https://github.com/example/repo.git go run main.go
+
+# Verify embedded scripts match source files
+diff posix/clone <(grep -A 1000 "const Clone =" posix/posix_gen.go | tail -n +2 | head -n -1 | sed 's/^//')
+
+# Check if generated files are outdated
+git status posix/posix_gen.go windows/windows_gen.go
+
+# Test specific clone scenarios locally
+docker run --rm \
+  -e DRONE_WORKSPACE=/test \
+  -e DRONE_REMOTE_URL=https://github.com/user/repo.git \
+  -e DRONE_BUILD_EVENT=pull_request \
+  -e DRONE_COMMIT_REF=refs/pull/123/head \
+  -e DRONE_COMMIT_SHA=abc123 \
+  -e DRONE_COMMIT_BRANCH=main \
+  harness/drone-git
+
+# View extracted scripts during execution (add to main.go for debugging)
+# fmt.Printf("Extracted script to: %s\n", tmpDir)
 ```
 
 ## Architecture Overview
@@ -111,7 +151,36 @@ Tests are located in `posix/posix_test.go` and rely on fixture data in `posix/fi
 ### Script Development
 - **POSIX scripts**: Located in `posix/`, entry point is `posix/script`
 - **Windows scripts**: Located in `windows/`, entry point is `windows/clone.ps1`
-- Scripts must handle various Drone environment variables (DRONE_WORKSPACE, DRONE_REMOTE_URL, etc.)
+- **Auxiliary Windows scripts**:
+  - `windows/utility.ps1` - Error handling utilities (Invoke-Utility function)
+  - `windows/git-utility.ps1` - Git fetch wrapper functions (Start-Fetch)
+  - `windows/common.ps1` - Shared git configuration and setup
+  - `windows/post-fetch.ps1` - Post-clone operations
+- Scripts must handle various Drone environment variables (see Environment Variables section)
+
+## Environment Variables
+
+### Core Drone Variables
+- `DRONE_WORKSPACE` - Target directory for git operations
+- `DRONE_REMOTE_URL` - Git repository URL
+- `DRONE_COMMIT_SHA` - Commit hash to checkout/merge
+- `DRONE_COMMIT_REF` - Git reference (refs/pull/*, refs/tags/*, refs/heads/*)
+- `DRONE_COMMIT_BRANCH` - Target branch name
+- `DRONE_BUILD_EVENT` - Event type (push, pull_request, tag)
+- `DRONE_TAG` - Tag name for tag events
+- `DRONE_SOURCE_BRANCH` - Source branch for pull requests
+
+### Plugin Configuration
+- `PLUGIN_DEPTH` - Clone depth for shallow clones (e.g., --depth=50)
+- `PLUGIN_PR_CLONE_STRATEGY` - PR strategy: "SourceBranch" or merge commit
+- `PLUGIN_SKIP_VERIFY` - Skip SSL verification if set
+- `DRONE_PR_MERGE_STRATEGY_BRANCH` - Use branch merge strategy if "true"
+
+### Authentication
+- `DRONE_NETRC_MACHINE` - Hostname for .netrc authentication
+- `DRONE_NETRC_USERNAME` - Username for .netrc
+- `DRONE_NETRC_PASSWORD` - Password/token for .netrc
+- `DRONE_SSH_KEY` - SSH private key for git operations
 
 ## Important Repository Context
 
@@ -123,3 +192,22 @@ The repository includes git-leaks support. Run `./git-hooks/install.sh` to enabl
 
 ### Manifest Management
 Multi-platform Docker manifests are managed via templates in `docker/manifest.tmpl` and `docker/manifest.rootless.tmpl`. These automatically generate platform-specific image references based on build tags.
+
+## Known Issues & Fixes
+
+### Pull Request Merge Issues
+**Problem**: `merge: <sha> - not something we can merge`
+**Location**: `posix/clone-pull-request:38` and `windows/clone-pull-request.ps1:38`
+**Cause**: `DRONE_COMMIT_SHA` contains incorrect commit hash not present in fetched refs
+**Fix**: Replace `git merge ${DRONE_COMMIT_SHA}` with `git merge FETCH_HEAD`
+
+### Windows Git Fetch Hanging
+**Problem**: Git fetch operations hang indefinitely on Windows
+**Location**: Windows PowerShell scripts using `Invoke-Utility`
+**Cause**: No timeout mechanism for git operations
+**Fix**: Add git config timeouts and PowerShell timeout wrappers
+
+### Script Generation Sync
+**Problem**: Embedded scripts don't match source files
+**Detection**: `git status posix/posix_gen.go windows/windows_gen.go`
+**Fix**: Always run `go generate` after modifying shell/PowerShell scripts

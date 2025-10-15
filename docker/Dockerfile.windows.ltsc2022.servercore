@@ -1,0 +1,71 @@
+# escape=`
+
+# Use PowerShell Nano Server for building stage (downloads only)
+FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS downloads
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Download Git Portable + Git LFS in single layer
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    # Create temp directory and work from there
+    $tempDir = New-Item -ItemType Directory -Path 'C:\temp' -Force; `
+    Set-Location $tempDir; `
+    # Download MinGit (reliable for containers)
+    Write-Host 'Downloading MinGit...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
+    # Download Git LFS
+    Write-Host 'Downloading Git LFS...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
+    # Extract MinGit
+    Write-Host 'Extracting Git...'; `
+    Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
+    # Extract Git LFS
+    Write-Host 'Extracting Git LFS...'; `
+    Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
+    # Ensure git cmd directory exists
+    if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
+    # Find the actual git-lfs.exe file (structure may vary)
+    $lfsExe = Get-ChildItem -Path 'git-lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
+    if ($lfsExe) { Copy-Item "git-lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe' } else { Write-Host 'Warning: git-lfs.exe not found in expected location' }; `
+    # Remove unnecessary Git components for container use
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\info'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\man'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\locale'; `
+    # Verify installation
+    Write-Host 'Verifying Git installation...'; `
+    & 'C:\git\cmd\git.exe' --version; `
+    & 'C:\git\cmd\git-lfs.exe' version
+
+# Use Windows Server Core as runtime (better SSH compatibility)
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install OpenSSH Client using Windows Feature (more reliable)
+RUN Add-WindowsCapability -Online -Name OpenSSH.Client*
+
+# Install PowerShell Core for better scripting
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/PowerShell/PowerShell/releases/download/v7.4.0/PowerShell-7.4.0-win-x64.msi' -OutFile 'PowerShell.msi'; `
+    Start-Process msiexec.exe -Wait -ArgumentList '/i PowerShell.msi /quiet'; `
+    Remove-Item 'PowerShell.msi'
+
+# Copy Git installation from downloads stage
+COPY --from=downloads /git /git
+
+# Add drone-git scripts
+ADD windows/* /bin/
+
+# Configure PATH to include Git and OpenSSH
+RUN setx /M PATH "%PATH%;C:\Program Files\PowerShell;C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH"
+
+# Verify installations
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+RUN Write-Host 'Verifying installations...'; `
+    & 'C:\git\cmd\git.exe' --version; `
+    & 'C:\git\cmd\git-lfs.exe' version; `
+    & 'C:\Windows\System32\OpenSSH\ssh.exe' -V; `
+    Write-Host 'All verifications successful'
+
+# Set working directory and default command
+WORKDIR /
+CMD [ "pwsh", "C:\\bin\\clone.ps1" ]
