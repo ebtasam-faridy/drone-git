@@ -1,8 +1,8 @@
 # escape=`
 
-# Ultra-lightweight approach: Use minimal servercore with aggressive cleanup
-FROM mcr.microsoft.com/windows/servercore:ltsc2022
-SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+# Use PowerShell-optimized Windows base (smaller than servercore)
+FROM mcr.microsoft.com/powershell:windowsservercore-ltsc2022
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
 # Install only essential components with aggressive cleanup
 RUN Write-Host 'DEBUG: Starting ultra-lightweight installation'; `
