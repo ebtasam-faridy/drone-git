@@ -5,8 +5,8 @@ package windows
 // Contents of windows/clone.ps1
 const Windows/Clone = `$ErrorActionPreference = 'Stop';
 
-# Debug output control - set DRONE_DEBUG=true to enable verbose debugging
-$DebugMode = ($Env:DRONE_DEBUG -eq 'true') -or ($Env:DRONE_DEBUG -eq '1')
+# Debug output enabled by default (for troubleshooting)
+$DebugMode = $true  # Always enabled for troubleshooting
 
 function Write-Debug {
     param([string]$Message)
@@ -16,11 +16,7 @@ function Write-Debug {
 }
 
 # Debug: Show environment information
-if ($DebugMode) {
-    Write-Host "🐛 DEBUG: Drone Git Clone Script Starting (Debug Mode Enabled)"
-} else {
-    Write-Debug "🐛 DEBUG: Drone Git Clone Script Starting"
-}
+Write-Host "🐛 DEBUG: Drone Git Clone Script Starting (Debug Mode Enabled)"
 Write-Debug "🖥️  DEBUG: PowerShell Version: $($PSVersionTable.PSVersion)"
 Write-Debug "🖥️  DEBUG: OS Version: $([System.Environment]::OSVersion)"
 Write-Debug "👤 DEBUG: Current User: $([System.Environment]::UserName)"
@@ -53,7 +49,7 @@ if ($Env:DRONE_SSH_KEY) {
 # so am setting it here instead. This is not idea.
 # Support both portable OpenSSH and Windows native OpenSSH
 Write-Debug "🔍 DEBUG: Setting up PATH with Git and SSH locations"
-$sshPaths = @('C:\openssh', 'C:\Windows\System32\OpenSSH')
+$sshPaths = @('C:\Windows\System32\OpenSSH', 'C:\openssh')
 $sshPath = $sshPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($sshPath) {
     Write-Debug "✅ DEBUG: Found SSH directory: $sshPath"
@@ -150,7 +146,7 @@ if ($Env:DRONE_SSH_KEY) {
     # Test SSH client availability
     Write-Debug "🔍 DEBUG: Testing SSH client availability"
     $sshExe = $null
-    $sshPaths = @('C:\openssh\ssh.exe', 'C:\Windows\System32\OpenSSH\ssh.exe')
+    $sshPaths = @('C:\Windows\System32\OpenSSH\ssh.exe', 'C:\openssh\ssh.exe')
     foreach ($path in $sshPaths) {
         if (Test-Path $path) {
             $sshExe = $path

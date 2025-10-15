@@ -1,0 +1,27 @@
+# escape=`
+
+# Simple test version to debug SSH issues
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Install OpenSSH Client and Git (minimal logging)
+RUN [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
+    Write-Host "Installing OpenSSH Client..."; `
+    Add-WindowsCapability -Online -Name OpenSSH.Client*; `
+    Write-Host "Downloading Git..."; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
+    Write-Host "Extracting Git..."; `
+    Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
+    Remove-Item -Force 'git.zip'; `
+    Write-Host "Installation completed"
+
+# Add debug script and drone scripts
+ADD debug-ssh.ps1 /debug-ssh.ps1
+ADD windows/* /bin/
+
+# Configure PATH
+ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
+
+# Set working directory and run debug test first
+WORKDIR /
+CMD [ "powershell", "-Command", "& C:\\debug-ssh.ps1; Write-Host '---'; & C:\\bin\\clone.ps1" ]
