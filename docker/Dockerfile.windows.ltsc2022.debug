@@ -11,7 +11,7 @@ RUN Write-Host "🐛 DEBUG: Base image information"; `
     Write-Host "👤 DEBUG: Current User: $([System.Environment]::UserName)"; `
     Write-Host "📁 DEBUG: Working Directory: $(Get-Location)"; `
     Write-Host "💾 DEBUG: Available Disk Space:"; `
-    Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 } | Select-Object DeviceID, @{Name="FreeSpace(GB)";Expression={[math]::Round($_.FreeSpace/1GB,2)}}, @{Name="Size(GB)";Expression={[math]::Round($_.Size/1GB,2)}}
+    Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 } | Select-Object DeviceID, @{Name='FreeSpaceGB';Expression={[math]::Round($_.FreeSpace/1GB,2)}}, @{Name='SizeGB';Expression={[math]::Round($_.Size/1GB,2)}} | Format-Table
 
 # Install OpenSSH Client and download Git with extensive debugging
 RUN Write-Host "🔧 DEBUG: Starting installation process"; `
