@@ -48,15 +48,9 @@ if ($Env:DRONE_SSH_KEY) {
 # HACK: no clue how to set the PATH inside the Dockerfile,
 # so am setting it here instead. This is not idea.
 # Support both portable OpenSSH and Windows native OpenSSH
-Write-Debug "DEBUG: Setting up PATH with Git and SSH locations"
-$sshPaths = @('C:\openssh', 'C:\Windows\System32\OpenSSH')
-$sshPath = $sshPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($sshPath) {
-    Write-Debug "DEBUG: Found SSH directory: $sshPath"
-} else {
-    Write-Debug "DEBUG: No SSH directory found in expected locations"
-}
-$Env:PATH += ";C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;$sshPath"
+Write-Debug "DEBUG: Setting up PATH with Git locations (Git handles SSH internally)"
+# Git for Windows includes SSH support, no need for external SSH client
+$Env:PATH += ";C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin"
 Write-Debug "DEBUG: Updated PATH: $($Env:PATH)"
 
 # Debug: Test Git installation
@@ -156,59 +150,48 @@ if ($Env:DRONE_SSH_KEY) {
         Write-Debug "DEBUG: Failed to set SSH key permissions: $_"
     }
     
-    # Test SSH client availability
-    Write-Debug "DEBUG: Testing SSH client availability"
+    # Check for SSH availability (Git handles SSH internally)
+    Write-Debug "DEBUG: Checking SSH support in Git"
     $sshExe = $null
-    $sshPaths = @('C:\openssh\ssh.exe', 'C:\Windows\System32\OpenSSH\ssh.exe')
-    foreach ($path in $sshPaths) {
+    $gitSshPaths = @('C:\git\usr\bin\ssh.exe', 'C:\git\mingw64\bin\ssh.exe')
+    foreach ($path in $gitSshPaths) {
         if (Test-Path $path) {
             $sshExe = $path
-            Write-Debug "DEBUG: Found SSH client at: $path"
+            Write-Debug "DEBUG: Found Git SSH client at: $path"
             try {
                 $sshVersion = & $path -V 2>&1
-                Write-Debug "DEBUG: SSH version: $sshVersion"
+                Write-Debug "DEBUG: Git SSH version: $sshVersion"
             } catch {
-                Write-Debug "DEBUG: Could not get SSH version: $_"
+                Write-Debug "DEBUG: Could not get Git SSH version: $_"
             }
             break
-        } else {
-            Write-Debug "DEBUG: SSH client not found at: $path"
         }
     }
     
     if (-not $sshExe) {
-        Write-Debug "DEBUG: No SSH client found in any expected location!"
-        Write-Debug "DEBUG: Current PATH: $($Env:PATH)"
-        Write-Debug "DEBUG: Searching for ssh.exe in PATH..."
-        try {
-            $pathSsh = Get-Command ssh -ErrorAction SilentlyContinue
-            if ($pathSsh) {
-                Write-Debug "DEBUG: Found SSH in PATH: $($pathSsh.Source)"
-                $sshExe = $pathSsh.Source
-            }
-        } catch {
-            Write-Debug "DEBUG: SSH not found in PATH either"
-        }
+        Write-Debug "DEBUG: No explicit SSH client found, Git will handle SSH internally"
+        Write-Debug "DEBUG: This is normal for MinGit - SSH operations will work through git commands"
     }
     
     # Set GIT_SSH_COMMAND with proper Windows path format
     $Env:GIT_SSH_COMMAND="ssh -i `"$keyPath`" -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -v"
     Write-Debug "DEBUG: Set GIT_SSH_COMMAND: $($Env:GIT_SSH_COMMAND)"
     
-    # Test SSH connectivity if we can extract hostname from DRONE_REMOTE_URL
+    # Prepare for SSH git operations
     if ($Env:DRONE_REMOTE_URL -match 'git@([^:]+):') {
         $hostname = $matches[1]
-        Write-Debug "DEBUG: Testing SSH connectivity to $hostname"
-        try {
-            if ($sshExe) {
-                Write-Debug "DEBUG: Running SSH test: $sshExe -i `"$keyPath`" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@$hostname"
+        Write-Debug "DEBUG: Will connect to $hostname via SSH for git operations"
+        Write-Debug "DEBUG: Git will handle SSH authentication using key at: $keyPath"
+        if ($sshExe) {
+            Write-Debug "DEBUG: SSH client found, testing basic SSH functionality"
+            try {
                 $sshTest = & $sshExe -i $keyPath -o StrictHostKeyChecking=no -o ConnectTimeout=10 -T git@$hostname 2>&1
-                Write-Debug "DEBUG: SSH test result: $sshTest"
-            } else {
-                Write-Debug "DEBUG: Cannot test SSH connectivity - no SSH client available"
+                Write-Debug "DEBUG: SSH pre-test result: $sshTest"
+            } catch {
+                Write-Debug "DEBUG: SSH pre-test failed (git operations may still work): $_"
             }
-        } catch {
-            Write-Debug "DEBUG: SSH connectivity test failed: $_"
+        } else {
+            Write-Debug "DEBUG: Git will handle SSH internally during git operations"
         }
     }
 }

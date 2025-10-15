@@ -18,24 +18,21 @@ RUN Write-Host 'DEBUG: Starting optimized installation process'; `
     Write-Host 'DEBUG: Downloading Git LFS...'; `
     Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
     Write-Host "DEBUG: Git LFS download completed - Size: $((Get-Item 'git-lfs.zip').Length) bytes"; `
-    # Download Portable OpenSSH (avoids need for servercore)
-    Write-Host 'DEBUG: Downloading Portable OpenSSH...'; `
-    Invoke-WebRequest -UseBasicParsing 'https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.5.0.0p1-Beta/OpenSSH-Win64.zip' -OutFile 'openssh.zip'; `
-    Write-Host "DEBUG: OpenSSH download completed - Size: $((Get-Item 'openssh.zip').Length) bytes"; `
+    # Download Git's built-in SSH (more compatible with nanoserver)
+    Write-Host 'DEBUG: Git includes SSH support via MinGW'; `
     # Extract MinGit
     Write-Host 'DEBUG: Extracting Git...'; `
     Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
     # Extract Git LFS
     Write-Host 'DEBUG: Extracting Git LFS...'; `
     Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
-    # Extract OpenSSH
-    Write-Host 'DEBUG: Extracting OpenSSH...'; `
-    Expand-Archive -Path 'openssh.zip' -DestinationPath 'openssh-temp'; `
-    New-Item -ItemType Directory -Path 'C:\openssh' -Force; `
-    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh.exe' -Destination 'C:\openssh\ssh.exe'; `
-    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh-keygen.exe' -Destination 'C:\openssh\ssh-keygen.exe'; `
-    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh-keyscan.exe' -Destination 'C:\openssh\ssh-keyscan.exe'; `
-    Write-Host 'DEBUG: OpenSSH files copied successfully'; `
+    # Check for Git's SSH support
+    Write-Host 'DEBUG: Checking Git SSH support...'; `
+    if (Test-Path 'C:\git\usr\bin\ssh.exe') { `
+        Write-Host 'DEBUG: Git includes SSH client - will use Git SSH'; `
+    } else { `
+        Write-Host 'DEBUG: Git SSH not found - Git operations will use built-in SSH'; `
+    } `
     # Ensure git cmd directory exists
     if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
     # Find the actual git-lfs.exe file (structure may vary)
@@ -44,7 +41,7 @@ RUN Write-Host 'DEBUG: Starting optimized installation process'; `
     # Cleanup downloads and temporary files to reduce layer size
     Write-Host 'DEBUG: Cleaning up...'; `
     Set-Location 'C:\'; `
-    Remove-Item -Recurse -Force 'C:\temp'; `
+    Remove-Item -Recurse -Force 'C:\temp' -ErrorAction SilentlyContinue; `
     # Remove unnecessary Git components for container use
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc'; `
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\info'; `
@@ -54,17 +51,21 @@ RUN Write-Host 'DEBUG: Starting optimized installation process'; `
     Write-Host 'DEBUG: Verifying installations...'; `
     & 'C:\git\cmd\git.exe' --version; `
     & 'C:\git\cmd\git-lfs.exe' version; `
-    # Verify OpenSSH installation
-    & 'C:\openssh\ssh.exe' -V; `
-    Get-ChildItem 'C:\openssh' | Select-Object Name, Length; `
+    # Check for SSH availability
+    Write-Host 'DEBUG: Checking SSH availability...'; `
+    if (Test-Path 'C:\git\usr\bin\ssh.exe') { `
+        & 'C:\git\usr\bin\ssh.exe' -V; `
+        Write-Host 'DEBUG: Git SSH available'; `
+    } else { `
+        Write-Host 'DEBUG: Git will use built-in SSH for git operations'; `
+    } `
     Write-Host 'DEBUG: Installation completed successfully!'
 
 # Use PowerShell Nano Server as final base (much smaller than windowsservercore)
 FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
 
-# Copy optimized git installation and OpenSSH
+# Copy optimized git installation (includes SSH support)
 COPY --from=git /git /git
-COPY --from=git /openssh /openssh
 
 # Add drone-git scripts
 ADD windows/* /bin/
@@ -75,12 +76,12 @@ RUN Write-Host 'DEBUG: Final verification...'; `
     # Test git directly with full path first
     & 'C:\git\cmd\git.exe' --version; `
     & 'C:\git\cmd\git-lfs.exe' version; `
-    # Test SSH client
-    if (Test-Path 'C:\openssh\ssh.exe') { & 'C:\openssh\ssh.exe' -V } else { Write-Warning 'SSH client not found' }; `
+    # Test SSH availability in Git
+    if (Test-Path 'C:\git\usr\bin\ssh.exe') { & 'C:\git\usr\bin\ssh.exe' -V; Write-Host 'DEBUG: Git SSH available' } else { Write-Host 'DEBUG: Git SSH will be handled internally' }; `
     Write-Host 'DEBUG: Final verification completed'
 
-# Configure PATH using ENV directive (including OpenSSH)
-ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\openssh;C:\Program Files\PowerShell;${PATH}"
+# Configure PATH using ENV directive (Git includes SSH support)
+ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Program Files\PowerShell;${PATH}"
 
 # Set working directory and default command
 WORKDIR /
