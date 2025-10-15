@@ -114,9 +114,22 @@ if ($Env:DRONE_SSH_KEY) {
     Write-Debug "DEBUG: SSH key preview: $keyPreview$keyEnd"
     Write-Debug "DEBUG: SSH key length: $($Env:DRONE_SSH_KEY.Length) characters"
     
-    # Ensure proper SSH key format with line breaks
-    $sshKeyContent = $Env:DRONE_SSH_KEY -replace '\s+', "`n"
-    $sshKeyContent | Out-File -FilePath $keyPath -Encoding ascii
+    # Write SSH key directly without modifying its format
+    # SSH keys should already have proper line breaks from the environment variable
+    Write-Debug "DEBUG: Writing SSH key with original formatting"
+    $Env:DRONE_SSH_KEY | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+    
+    # Debug: Check the actual key file content format
+    if (Test-Path $keyPath) {
+        $keyFileContent = Get-Content $keyPath -Raw
+        $firstLine = ($keyFileContent -split "`n")[0]
+        Write-Debug "DEBUG: SSH key file first line: $firstLine"
+        if ($keyFileContent -match "-----BEGIN.*PRIVATE KEY-----") {
+            Write-Debug "DEBUG: SSH key appears to have proper BEGIN header"
+        } else {
+            Write-Debug "DEBUG: WARNING - SSH key may not have proper format"
+        }
+    }
     
     # Debug: Verify key file was created
     if (Test-Path $keyPath) {
