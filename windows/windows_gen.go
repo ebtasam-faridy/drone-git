@@ -42,9 +42,11 @@ if ($Env:DRONE_SSH_KEY) {
     $sshDir = Join-Path $Env:USERPROFILE '.ssh'
     New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
     
-    # Write SSH key with proper line endings
+    # Write SSH key with proper line endings and format
     $keyPath = Join-Path $sshDir 'id_rsa'
-    $Env:DRONE_SSH_KEY | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+    # Ensure proper SSH key format with line breaks
+    $sshKeyContent = $Env:DRONE_SSH_KEY -replace '\s+', "`n"
+    $sshKeyContent | Out-File -FilePath $keyPath -Encoding ascii
     
     # Set proper permissions for SSH key (Windows equivalent of chmod 600)
     $acl = Get-Acl $keyPath
