@@ -1,73 +1,44 @@
 # escape=`
 
-# Use PowerShell-optimized Windows base (smaller than servercore)
-FROM mcr.microsoft.com/powershell:windowsservercore-ltsc2022
-SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+# Stage 1: Fetch Git + Git LFS + OpenSSH
+FROM mcr.microsoft.com/windows/servercore:ltsc2022 AS builder
+SHELL ["powershell", "-Command", "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
 
-# Install only essential components with aggressive cleanup
-RUN Write-Host 'DEBUG: Starting ultra-lightweight installation'; `
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
-    # Install OpenSSH Client (reliable Windows feature)
-    Write-Host 'DEBUG: Installing OpenSSH Client...'; `
-    Add-WindowsCapability -Online -Name OpenSSH.Client* | Out-Null; `
-    if (Test-Path 'C:\Windows\System32\OpenSSH\ssh.exe') { `
-        Write-Host 'DEBUG: OpenSSH installed successfully'; `
-    } else { `
-        Write-Host 'ERROR: OpenSSH installation failed'; `
-        exit 1; `
-    } `
-    # Download and install Git with aggressive optimization
-    Write-Host 'DEBUG: Downloading Git...'; `
-    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
-    Write-Host 'DEBUG: Extracting Git...'; `
-    Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
-    Remove-Item 'git.zip'; `
-    # Download Git LFS
-    Write-Host 'DEBUG: Installing Git LFS...'; `
-    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'lfs.zip'; `
-    Expand-Archive -Path 'lfs.zip' -DestinationPath 'lfs-temp'; `
-    if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
-    $lfsExe = Get-ChildItem -Path 'lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
-    if ($lfsExe) { Copy-Item "lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe' }; `
-    Remove-Item -Recurse -Force 'lfs-temp', 'lfs.zip'; `
-    # Aggressive cleanup to minimize image size
-    Write-Host 'DEBUG: Performing aggressive cleanup...'; `
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue @( `
-        'C:\git\usr\share\doc', `
-        'C:\git\usr\share\info', `
-        'C:\git\usr\share\man', `
-        'C:\git\usr\share\locale', `
-        'C:\git\usr\share\git-gui', `
-        'C:\git\usr\share\gitk', `
-        'C:\git\usr\share\git-core\templates', `
-        'C:\Windows\Temp\*', `
-        'C:\Users\*\AppData\Local\Temp\*', `
-        'C:\ProgramData\Package Cache' `
-    ); `
-    # Remove Windows bloat
-    Write-Host 'DEBUG: Removing Windows components...'; `
-    Get-WindowsOptionalFeature -Online | Where-Object { $_.State -eq 'Enabled' -and $_.FeatureName -notmatch '(NetFx|OpenSSH)' } | `
-        ForEach-Object { try { Disable-WindowsOptionalFeature -Online -FeatureName $_.FeatureName -Remove -NoRestart } catch {} }; `
-    # Clean Windows Update and CBS logs
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue @( `
-        'C:\Windows\SoftwareDistribution\Download\*', `
-        'C:\Windows\Logs\CBS\*', `
-        'C:\Windows\Logs\DISM\*', `
-        'C:\Windows\WinSxS\ManifestCache\*' `
-    ); `
-    # Verify critical components still work
-    Write-Host 'DEBUG: Verifying installations...'; `
-    & 'C:\git\cmd\git.exe' --version; `
-    & 'C:\Windows\System32\OpenSSH\ssh.exe' -V; `
-    Write-Host 'DEBUG: Installation completed successfully'
+# Download minimal Git for Windows (MinGit)
+RUN Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/MinGit-2.45.2-64-bit.zip" -OutFile "C:\\git.zip"; `
+    Expand-Archive "C:\\git.zip" -DestinationPath "C:\\git"; `
+    Remove-Item "C:\\git.zip" -Force
 
-# Add drone-git scripts
-ADD windows/* /bin/
+# Download Git LFS
+RUN Invoke-WebRequest -Uri "https://github.com/git-lfs/git-lfs/releases/download/v3.5.1/git-lfs-windows-amd64-v3.5.1.zip" -OutFile "C:\\git-lfs.zip"; `
+    Expand-Archive "C:\\git-lfs.zip" -DestinationPath "C:\\git-lfs"; `
+    Remove-Item "C:\\git-lfs.zip" -Force
 
-# Set minimal PATH and final optimizations
-ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
+# Install OpenSSH client
+RUN Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+
+# Clean up unnecessary Windows updates cache
+RUN Remove-Item -Recurse -Force C:\\Windows\\Temp\\* , C:\\Users\\*\\AppData\\Local\\Temp\\*
 
 
-# Set working directory and default command
-WORKDIR /
-CMD [ "powershell", "C:\\\\bin\\\\clone.ps1" ]
+# Stage 2: Final image
+FROM mcr.microsoft.com/powershell:ltsc2022
+SHELL ["pwsh", "-Command", "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';"]
+
+# Copy only what's required from builder stage
+COPY --from=builder C:\\git C:\\git
+COPY --from=builder C:\\git-lfs C:\\git-lfs
+COPY --from=builder C:\\Windows\\System32\\OpenSSH C:\\Windows\\System32\\OpenSSH
+
+# Add scripts from repo
+ADD windows/* C:\\bin\\
+
+# Add Git, PowerShell, OpenSSH, and Git LFS to PATH
+USER ContainerAdministrator
+RUN setx /M PATH "C:\\Program Files\\PowerShell;C:\\git\\cmd;C:\\git\\mingw64\\bin;C:\\git\\usr\\bin;C:\\Windows\\System32\\OpenSSH;C:\\git-lfs"
+
+# Verify Git + SSH installation
+RUN git --version; ssh -V; git lfs version
+
+# Default entrypoint for Harness Git step
+CMD ["pwsh", "C:\\bin\\clone.ps1"]
