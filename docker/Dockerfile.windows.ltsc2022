@@ -1,88 +1,80 @@
 # escape=`
 
-# Use PowerShell Nano Server for building stage (much smaller, optimized approach)
-FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS git
-SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+# Ultra-lightweight approach: Use minimal servercore with aggressive cleanup
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-# Download and install Git Portable + Git LFS + OpenSSH in single optimized layer
-RUN Write-Host 'DEBUG: Starting optimized installation process'; `
+# Install only essential components with aggressive cleanup
+RUN Write-Host 'DEBUG: Starting ultra-lightweight installation'; `
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
-    # Create temp directory and work from there
-    $tempDir = New-Item -ItemType Directory -Path 'C:\temp' -Force; `
-    Set-Location $tempDir; `
-    # Download MinGit (reliable for containers)
-    Write-Host 'DEBUG: Downloading MinGit...'; `
+    # Install OpenSSH Client (reliable Windows feature)
+    Write-Host 'DEBUG: Installing OpenSSH Client...'; `
+    Add-WindowsCapability -Online -Name OpenSSH.Client* | Out-Null; `
+    if (Test-Path 'C:\Windows\System32\OpenSSH\ssh.exe') { `
+        Write-Host 'DEBUG: OpenSSH installed successfully'; `
+    } else { `
+        Write-Host 'ERROR: OpenSSH installation failed'; `
+        exit 1; `
+    } `
+    # Download and install Git with aggressive optimization
+    Write-Host 'DEBUG: Downloading Git...'; `
     Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
-    Write-Host "DEBUG: Git download completed - Size: $((Get-Item 'git.zip').Length) bytes"; `
-    # Download Git LFS
-    Write-Host 'DEBUG: Downloading Git LFS...'; `
-    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
-    Write-Host "DEBUG: Git LFS download completed - Size: $((Get-Item 'git-lfs.zip').Length) bytes"; `
-    # Download Git's built-in SSH (more compatible with nanoserver)
-    Write-Host 'DEBUG: Git includes SSH support via MinGW'; `
-    # Extract MinGit
     Write-Host 'DEBUG: Extracting Git...'; `
     Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
-    # Extract Git LFS
-    Write-Host 'DEBUG: Extracting Git LFS...'; `
-    Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
-    # Check for Git's SSH support
-    Write-Host 'DEBUG: Checking Git SSH support...'; `
-    if (Test-Path 'C:\git\usr\bin\ssh.exe') { `
-        Write-Host 'DEBUG: Git includes SSH client - will use Git SSH'; `
-    } else { `
-        Write-Host 'DEBUG: Git SSH not found - Git operations will use built-in SSH'; `
-    } `
-    # Ensure git cmd directory exists
+    Remove-Item 'git.zip'; `
+    # Download Git LFS
+    Write-Host 'DEBUG: Installing Git LFS...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'lfs.zip'; `
+    Expand-Archive -Path 'lfs.zip' -DestinationPath 'lfs-temp'; `
     if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
-    # Find the actual git-lfs.exe file (structure may vary)
-    $lfsExe = Get-ChildItem -Path 'git-lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
-    if ($lfsExe) { Copy-Item "git-lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe'; Write-Host 'DEBUG: Git LFS installed successfully' } else { Write-Host 'DEBUG: Warning - git-lfs.exe not found in expected location' }; `
-    # Cleanup downloads and temporary files to reduce layer size
-    Write-Host 'DEBUG: Cleaning up...'; `
-    Set-Location 'C:\'; `
-    Remove-Item -Recurse -Force 'C:\temp' -ErrorAction SilentlyContinue; `
-    # Remove unnecessary Git components for container use
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc'; `
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\info'; `
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\man'; `
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\locale'; `
-    # Verify installation
+    $lfsExe = Get-ChildItem -Path 'lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
+    if ($lfsExe) { Copy-Item "lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe' }; `
+    Remove-Item -Recurse -Force 'lfs-temp', 'lfs.zip'; `
+    # Aggressive cleanup to minimize image size
+    Write-Host 'DEBUG: Performing aggressive cleanup...'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue @( `
+        'C:\git\usr\share\doc', `
+        'C:\git\usr\share\info', `
+        'C:\git\usr\share\man', `
+        'C:\git\usr\share\locale', `
+        'C:\git\usr\share\git-gui', `
+        'C:\git\usr\share\gitk', `
+        'C:\git\usr\share\git-core\templates', `
+        'C:\Windows\Temp\*', `
+        'C:\Users\*\AppData\Local\Temp\*', `
+        'C:\ProgramData\Package Cache' `
+    ); `
+    # Remove Windows bloat
+    Write-Host 'DEBUG: Removing Windows components...'; `
+    Get-WindowsOptionalFeature -Online | Where-Object { $_.State -eq 'Enabled' -and $_.FeatureName -notmatch '(NetFx|OpenSSH)' } | `
+        ForEach-Object { try { Disable-WindowsOptionalFeature -Online -FeatureName $_.FeatureName -Remove -NoRestart } catch {} }; `
+    # Clean Windows Update and CBS logs
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue @( `
+        'C:\Windows\SoftwareDistribution\Download\*', `
+        'C:\Windows\Logs\CBS\*', `
+        'C:\Windows\Logs\DISM\*', `
+        'C:\Windows\WinSxS\ManifestCache\*' `
+    ); `
+    # Verify critical components still work
     Write-Host 'DEBUG: Verifying installations...'; `
     & 'C:\git\cmd\git.exe' --version; `
-    & 'C:\git\cmd\git-lfs.exe' version; `
-    # Check for SSH availability
-    Write-Host 'DEBUG: Checking SSH availability...'; `
-    if (Test-Path 'C:\git\usr\bin\ssh.exe') { `
-        & 'C:\git\usr\bin\ssh.exe' -V; `
-        Write-Host 'DEBUG: Git SSH available'; `
-    } else { `
-        Write-Host 'DEBUG: Git will use built-in SSH for git operations'; `
-    } `
-    Write-Host 'DEBUG: Installation completed successfully!'
-
-# Use PowerShell Nano Server as final base (much smaller than windowsservercore)
-FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
-
-# Copy optimized git installation (includes SSH support)
-COPY --from=git /git /git
+    & 'C:\Windows\System32\OpenSSH\ssh.exe' -V; `
+    Write-Host 'DEBUG: Installation completed successfully'
 
 # Add drone-git scripts
 ADD windows/* /bin/
 
-# Verify git works in final image and configure PATH
-SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
-RUN Write-Host 'DEBUG: Final verification...'; `
-    # Test git directly with full path first
-    & 'C:\git\cmd\git.exe' --version; `
-    & 'C:\git\cmd\git-lfs.exe' version; `
-    # Test SSH availability in Git
-    if (Test-Path 'C:\git\usr\bin\ssh.exe') { & 'C:\git\usr\bin\ssh.exe' -V; Write-Host 'DEBUG: Git SSH available' } else { Write-Host 'DEBUG: Git SSH will be handled internally' }; `
-    Write-Host 'DEBUG: Final verification completed'
+# Set minimal PATH and final optimizations
+ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
 
-# Configure PATH using ENV directive (Git includes SSH support)
-ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Program Files\PowerShell;${PATH}"
+# Final size optimization
+RUN Write-Host 'DEBUG: Final optimization...'; `
+    # Remove any remaining temp files
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\Windows\Temp\*'; `
+    # Compact the image
+    & dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase; `
+    Write-Host 'DEBUG: Final optimization completed'
 
 # Set working directory and default command
 WORKDIR /
-CMD [ "pwsh", "C:\\bin\\clone.ps1" ]
+CMD [ "powershell", "C:\\\\bin\\\\clone.ps1" ]
