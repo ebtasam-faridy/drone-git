@@ -1,111 +1,87 @@
 # escape=`
 
-# Use Windows Server Core for better SSH compatibility (reliable OpenSSH)
-FROM mcr.microsoft.com/windows/servercore:ltsc2022
-SHELL ["powershell.exe", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+# Use PowerShell Nano Server for building stage (much smaller, optimized approach)
+FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022 AS git
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-# Install OpenSSH Client and download Git with debugging
-RUN Write-Host '🔧 DEBUG: Starting installation process'; `
+# Download and install Git Portable + Git LFS + OpenSSH in single optimized layer
+RUN Write-Host 'DEBUG: Starting optimized installation process'; `
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `
-    # Install OpenSSH Client using Windows Feature (most reliable)
-    Write-Host '🔐 DEBUG: Installing OpenSSH Client...'; `
-    try { `
-        Add-WindowsCapability -Online -Name OpenSSH.Client*; `
-        if (Test-Path 'C:\Windows\System32\OpenSSH\ssh.exe') { `
-            $sshVersion = & 'C:\Windows\System32\OpenSSH\ssh.exe' -V 2>&1; `
-            Write-Host "✅ DEBUG: OpenSSH installed successfully - Version: $sshVersion"; `
-        } else { `
-            Write-Host '❌ DEBUG: OpenSSH installation failed - ssh.exe not found'; `
-        } `
-    } catch { `
-        Write-Host "❌ DEBUG: OpenSSH installation error: $_"; `
-    } `
-    # Download Git and Git LFS
-    Write-Host '📥 DEBUG: Downloading Git and Git LFS...'; `
-    try { `
-        Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
-        Write-Host "✅ DEBUG: Git download completed - Size: $((Get-Item 'git.zip').Length) bytes"; `
-        Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
-        Write-Host "✅ DEBUG: Git LFS download completed - Size: $((Get-Item 'git-lfs.zip').Length) bytes"; `
-    } catch { `
-        Write-Host "❌ DEBUG: Download error: $_"; `
-        throw; `
-    } `
-    # Extract Git
-    Write-Host '📦 DEBUG: Extracting Git...'; `
-    try { `
-        Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
-        Write-Host '✅ DEBUG: Git extraction completed'; `
-    } catch { `
-        Write-Host "❌ DEBUG: Git extraction error: $_"; `
-        throw; `
-    } `
+    # Create temp directory and work from there
+    $tempDir = New-Item -ItemType Directory -Path 'C:\temp' -Force; `
+    Set-Location $tempDir; `
+    # Download MinGit (reliable for containers)
+    Write-Host 'DEBUG: Downloading MinGit...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.39.2.windows.1/MinGit-2.39.2-64-bit.zip' -OutFile 'git.zip'; `
+    Write-Host "DEBUG: Git download completed - Size: $((Get-Item 'git.zip').Length) bytes"; `
+    # Download Git LFS
+    Write-Host 'DEBUG: Downloading Git LFS...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-lfs/git-lfs/releases/download/v3.7.0/git-lfs-windows-amd64-v3.7.0.zip' -OutFile 'git-lfs.zip'; `
+    Write-Host "DEBUG: Git LFS download completed - Size: $((Get-Item 'git-lfs.zip').Length) bytes"; `
+    # Download Portable OpenSSH (avoids need for servercore)
+    Write-Host 'DEBUG: Downloading Portable OpenSSH...'; `
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.5.0.0p1-Beta/OpenSSH-Win64.zip' -OutFile 'openssh.zip'; `
+    Write-Host "DEBUG: OpenSSH download completed - Size: $((Get-Item 'openssh.zip').Length) bytes"; `
+    # Extract MinGit
+    Write-Host 'DEBUG: Extracting Git...'; `
+    Expand-Archive -Path 'git.zip' -DestinationPath 'C:\git'; `
     # Extract Git LFS
-    Write-Host '📦 DEBUG: Extracting Git LFS...'; `
-    try { `
-        Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
-        if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
-        $lfsExe = Get-ChildItem -Path 'git-lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
-        if ($lfsExe) { `
-            Copy-Item "git-lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe'; `
-            Write-Host '✅ DEBUG: Git LFS installed successfully'; `
-        } else { `
-            Write-Host '⚠️  DEBUG: git-lfs.exe not found in expected location'; `
-        } `
-    } catch { `
-        Write-Host "❌ DEBUG: Git LFS extraction error: $_"; `
-    } `
-    # Cleanup
-    Write-Host '🧹 DEBUG: Cleaning up downloads...'; `
-    Remove-Item -Force 'git.zip', 'git-lfs.zip'; `
-    Remove-Item -Recurse -Force 'git-lfs-temp'; `
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc', 'C:\git\usr\share\info', 'C:\git\usr\share\man', 'C:\git\usr\share\locale'; `
-    # Final verification
-    Write-Host '✅ DEBUG: Verifying installations...'; `
-    try { `
-        $gitVersion = & 'C:\git\cmd\git.exe' --version; `
-        Write-Host "✅ DEBUG: Git verification: $gitVersion"; `
-    } catch { `
-        Write-Host "❌ DEBUG: Git verification failed: $_"; `
-    } `
-    try { `
-        $lfsVersion = & 'C:\git\cmd\git-lfs.exe' version; `
-        Write-Host "✅ DEBUG: Git LFS verification: $lfsVersion"; `
-    } catch { `
-        Write-Host "❌ DEBUG: Git LFS verification failed: $_"; `
-    } `
-    try { `
-        $sshVersion = & 'C:\Windows\System32\OpenSSH\ssh.exe' -V 2>&1; `
-        Write-Host "✅ DEBUG: SSH verification: $sshVersion"; `
-    } catch { `
-        Write-Host "❌ DEBUG: SSH verification failed: $_"; `
-    } `
-    Write-Host '🎉 DEBUG: Installation completed successfully!'
+    Write-Host 'DEBUG: Extracting Git LFS...'; `
+    Expand-Archive -Path 'git-lfs.zip' -DestinationPath 'git-lfs-temp'; `
+    # Extract OpenSSH
+    Write-Host 'DEBUG: Extracting OpenSSH...'; `
+    Expand-Archive -Path 'openssh.zip' -DestinationPath 'openssh-temp'; `
+    New-Item -ItemType Directory -Path 'C:\openssh' -Force; `
+    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh.exe' -Destination 'C:\openssh\ssh.exe'; `
+    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh-keygen.exe' -Destination 'C:\openssh\ssh-keygen.exe'; `
+    Copy-Item -Path 'openssh-temp\OpenSSH-Win64\ssh-keyscan.exe' -Destination 'C:\openssh\ssh-keyscan.exe'; `
+    Write-Host 'DEBUG: OpenSSH files copied successfully'; `
+    # Ensure git cmd directory exists
+    if (-not (Test-Path 'C:\git\cmd')) { New-Item -ItemType Directory -Path 'C:\git\cmd' -Force }; `
+    # Find the actual git-lfs.exe file (structure may vary)
+    $lfsExe = Get-ChildItem -Path 'git-lfs-temp' -Name 'git-lfs.exe' -Recurse | Select-Object -First 1; `
+    if ($lfsExe) { Copy-Item "git-lfs-temp\$lfsExe" 'C:\git\cmd\git-lfs.exe'; Write-Host 'DEBUG: Git LFS installed successfully' } else { Write-Host 'DEBUG: Warning - git-lfs.exe not found in expected location' }; `
+    # Cleanup downloads and temporary files to reduce layer size
+    Write-Host 'DEBUG: Cleaning up...'; `
+    Set-Location 'C:\'; `
+    Remove-Item -Recurse -Force 'C:\temp'; `
+    # Remove unnecessary Git components for container use
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\doc'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\info'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\man'; `
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\git\usr\share\locale'; `
+    # Verify installation
+    Write-Host 'DEBUG: Verifying installations...'; `
+    & 'C:\git\cmd\git.exe' --version; `
+    & 'C:\git\cmd\git-lfs.exe' version; `
+    # Verify OpenSSH installation
+    & 'C:\openssh\ssh.exe' -V; `
+    Get-ChildItem 'C:\openssh' | Select-Object Name, Length; `
+    Write-Host 'DEBUG: Installation completed successfully!'
+
+# Use PowerShell Nano Server as final base (much smaller than windowsservercore)
+FROM mcr.microsoft.com/powershell:nanoserver-ltsc2022
+
+# Copy optimized git installation and OpenSSH
+COPY --from=git /git /git
+COPY --from=git /openssh /openssh
 
 # Add drone-git scripts
 ADD windows/* /bin/
 
-# Configure PATH and verify final setup
-ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
+# Verify git works in final image and configure PATH
+SHELL ["pwsh", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+RUN Write-Host 'DEBUG: Final verification...'; `
+    # Test git directly with full path first
+    & 'C:\git\cmd\git.exe' --version; `
+    & 'C:\git\cmd\git-lfs.exe' version; `
+    # Test SSH client
+    if (Test-Path 'C:\openssh\ssh.exe') { & 'C:\openssh\ssh.exe' -V } else { Write-Warning 'SSH client not found' }; `
+    Write-Host 'DEBUG: Final verification completed'
 
-# Final verification with debug output
-RUN Write-Host '🧪 DEBUG: Final container verification'; `
-    Write-Host '🔍 DEBUG: Testing Git...'; `
-    try { `
-        $gitTest = & git --version; `
-        Write-Host "✅ DEBUG: Git test passed: $gitTest"; `
-    } catch { `
-        Write-Host "❌ DEBUG: Git test failed: $_"; `
-    } `
-    Write-Host '🔍 DEBUG: Testing SSH...'; `
-    try { `
-        $sshTest = & ssh -V 2>&1; `
-        Write-Host "✅ DEBUG: SSH test passed: $sshTest"; `
-    } catch { `
-        Write-Host "❌ DEBUG: SSH test failed: $_"; `
-    } `
-    Write-Host '🎉 DEBUG: Final verification completed!'
+# Configure PATH using ENV directive (including OpenSSH)
+ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\openssh;C:\Program Files\PowerShell;${PATH}"
 
 # Set working directory and default command
 WORKDIR /
-CMD [ "powershell", "C:\\bin\\clone.ps1" ]
+CMD [ "pwsh", "C:\\bin\\clone.ps1" ]

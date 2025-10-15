@@ -44,7 +44,7 @@ if ($Env:DRONE_SSH_KEY) {
 # so am setting it here instead. This is not idea.
 # Support both portable OpenSSH and Windows native OpenSSH
 Write-Debug "DEBUG: Setting up PATH with Git and SSH locations"
-$sshPaths = @('C:\Windows\System32\OpenSSH', 'C:\openssh')
+$sshPaths = @('C:\openssh', 'C:\Windows\System32\OpenSSH')
 $sshPath = $sshPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($sshPath) {
     Write-Debug "DEBUG: Found SSH directory: $sshPath"
@@ -154,7 +154,7 @@ if ($Env:DRONE_SSH_KEY) {
     # Test SSH client availability
     Write-Debug "DEBUG: Testing SSH client availability"
     $sshExe = $null
-    $sshPaths = @('C:\Windows\System32\OpenSSH\ssh.exe', 'C:\openssh\ssh.exe')
+    $sshPaths = @('C:\openssh\ssh.exe', 'C:\Windows\System32\OpenSSH\ssh.exe')
     foreach ($path in $sshPaths) {
         if (Test-Path $path) {
             $sshExe = $path
