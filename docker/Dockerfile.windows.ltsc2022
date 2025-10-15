@@ -67,8 +67,6 @@ ADD windows/* /bin/
 # Set minimal PATH and final optimizations
 ENV PATH="C:\git\cmd;C:\git\mingw64\bin;C:\git\usr\bin;C:\Windows\System32\OpenSSH;C:\Windows\System32\WindowsPowerShell\v1.0;${PATH}"
 
-# Final size optimization  
-RUN powershell -Command "Write-Host 'DEBUG: Final optimization completed'"
 
 # Set working directory and default command
 WORKDIR /
