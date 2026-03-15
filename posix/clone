@@ -58,7 +58,16 @@ if [ ! -z "${DRONE_SSH_KEY}" ]; then
 		ssh-keygen -p -f ${HOME}/.ssh/id_rsa -P ${DRONE_SSH_PASSPHRASE} -N ""
 	fi
 
-	ssh-keyscan -H ${SSH_PORT_FLAG} ${SSH_KEYSCAN_TIMEOUT_FLAG} ${DRONE_NETRC_MACHINE} > ${HOME}/.ssh/known_hosts 2> /dev/null
+	set +e
+	ssh-keyscan -v -H ${SSH_PORT_FLAG} ${SSH_KEYSCAN_TIMEOUT_FLAG} ${DRONE_NETRC_MACHINE} > ${HOME}/.ssh/known_hosts
+	SSH_KEYSCAN_EXIT=$?
+	set -e
+	#region agent log
+	echo "[SSH-DIAG] ssh-keyscan exit code: ${SSH_KEYSCAN_EXIT}" >&2
+	#endregion
+	if [ "${SSH_KEYSCAN_EXIT}" -ne 0 ]; then
+		exit "${SSH_KEYSCAN_EXIT}"
+	fi
 	export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=${HOME}/.ssh/known_hosts -i ${HOME}/.ssh/id_rsa ${SSH_PORT_FLAG} -F /dev/null"
 fi
 
