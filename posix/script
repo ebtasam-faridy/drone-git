@@ -1,3 +1,3 @@
 dir=$(dirname "$0")
-export PATH=$dir:$PATH
-clone
+export DRONE_SCRIPT_DIR="$dir"
+sh "$dir/clone"

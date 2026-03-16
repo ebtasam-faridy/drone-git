@@ -2,9 +2,13 @@
 
 set -e
 
+if [ -z "${DRONE_SCRIPT_DIR}" ]; then
+	DRONE_SCRIPT_DIR=$(dirname "$0")
+fi
+
 # if PLUGIN_ONLY_COPY_FILE_CONTENT is set, only copy the file content
 if [ "$PLUGIN_ONLY_COPY_FILE_CONTENT" = "true" ]; then
-	copy-file-content
+	sh "${DRONE_SCRIPT_DIR}/copy-file-content"
 	exit 0
 fi
 
@@ -126,22 +130,22 @@ case $DRONE_COMMIT_REF in
   refs/merge-requests/* ) CLONE_TYPE=pull_request ;;
 esac
 
-common
+sh "${DRONE_SCRIPT_DIR}/common"
 
 case $CLONE_TYPE in
 pull_request)
-	clone-pull-request
+	sh "${DRONE_SCRIPT_DIR}/clone-pull-request"
 	;;
 tag)
-	clone-tag
+	sh "${DRONE_SCRIPT_DIR}/clone-tag"
 	;;
 *)
-	clone-commit
+	sh "${DRONE_SCRIPT_DIR}/clone-commit"
 	;;
 esac
 
-post-fetch
+sh "${DRONE_SCRIPT_DIR}/post-fetch"
 
-copy-file-content
+sh "${DRONE_SCRIPT_DIR}/copy-file-content"
 
 # Build tool detection and metrics collection now handled by main binary

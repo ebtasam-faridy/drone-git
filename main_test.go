@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,4 +111,34 @@ func TestRunCmds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtractedPosixScriptsUseInterpreterInvocation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "drone-git-script-invoke-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	require.NoError(t, writeScriptsToTemp(tmpDir))
+
+	scriptBytes, err := os.ReadFile(filepath.Join(tmpDir, "posix", "script"))
+	require.NoError(t, err)
+	script := string(scriptBytes)
+	assert.Contains(t, script, "sh \"$dir/clone\"")
+	assert.Contains(t, script, "export DRONE_SCRIPT_DIR=\"$dir\"")
+	assert.NotContains(t, script, "export PATH=$dir:$PATH")
+
+	cloneBytes, err := os.ReadFile(filepath.Join(tmpDir, "posix", "clone"))
+	require.NoError(t, err)
+	clone := string(cloneBytes)
+	for _, invoke := range []string{
+		"sh \"${DRONE_SCRIPT_DIR}/copy-file-content\"",
+		"sh \"${DRONE_SCRIPT_DIR}/common\"",
+		"sh \"${DRONE_SCRIPT_DIR}/clone-pull-request\"",
+		"sh \"${DRONE_SCRIPT_DIR}/clone-tag\"",
+		"sh \"${DRONE_SCRIPT_DIR}/clone-commit\"",
+		"sh \"${DRONE_SCRIPT_DIR}/post-fetch\"",
+	} {
+		assert.Contains(t, clone, invoke)
+	}
+	assert.False(t, strings.Contains(clone, "\nclone-commit\n"), "legacy bare script invocation should not be present")
 }
