@@ -58,8 +58,30 @@ if [ ! -z "${DRONE_SSH_KEY}" ]; then
 		ssh-keygen -p -f ${HOME}/.ssh/id_rsa -P ${DRONE_SSH_PASSPHRASE} -N ""
 	fi
 
-	ssh-keyscan -H ${SSH_PORT_FLAG} ${SSH_KEYSCAN_TIMEOUT_FLAG} ${DRONE_NETRC_MACHINE} > ${HOME}/.ssh/known_hosts 2> /dev/null
-	export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=${HOME}/.ssh/known_hosts -i ${HOME}/.ssh/id_rsa ${SSH_PORT_FLAG} -F /dev/null"
+	KEYSCAN_ERR_FILE="${HOME}/.ssh/ssh-keyscan.err"
+	: > "${KEYSCAN_ERR_FILE}"
+
+	set +e
+	ssh-keyscan -H ${SSH_PORT_FLAG} ${SSH_KEYSCAN_TIMEOUT_FLAG} ${DRONE_NETRC_MACHINE} > ${HOME}/.ssh/known_hosts 2> "${KEYSCAN_ERR_FILE}"
+	SSH_KEYSCAN_EXIT=$?
+	set -e
+
+	# Strict FIPS-compatible retry path: keep host verification strict and use FIPS-safe key types.
+	if [ "${SSH_KEYSCAN_EXIT}" -ne 0 ] && grep -Eiq "not allowed in FIPS mode|kex.*\(no match\)|kex_gen_client" "${KEYSCAN_ERR_FILE}"; then
+		: > "${KEYSCAN_ERR_FILE}"
+		set +e
+		ssh-keyscan -t rsa,ecdsa -H ${SSH_PORT_FLAG} ${SSH_KEYSCAN_TIMEOUT_FLAG} ${DRONE_NETRC_MACHINE} > ${HOME}/.ssh/known_hosts 2> "${KEYSCAN_ERR_FILE}"
+		SSH_KEYSCAN_EXIT=$?
+		set -e
+	fi
+
+	if [ "${SSH_KEYSCAN_EXIT}" -ne 0 ]; then
+		echo "[SSH-DIAG] ssh-keyscan failed under strict FIPS-compatible policy; exiting safely" >&2
+		head -n 20 "${KEYSCAN_ERR_FILE}" >&2 || true
+		exit "${SSH_KEYSCAN_EXIT}"
+	fi
+
+	export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=yes -o KexAlgorithms=ecdh-sha2-nistp256,diffie-hellman-group14-sha256 -o HostKeyAlgorithms=rsa-sha2-512,rsa-sha2-256,ecdsa-sha2-nistp256 -o PubkeyAcceptedAlgorithms=+rsa-sha2-512,rsa-sha2-256,ecdsa-sha2-nistp256 -o UserKnownHostsFile=${HOME}/.ssh/known_hosts -i ${HOME}/.ssh/id_rsa ${SSH_PORT_FLAG} -F /dev/null"
 fi
 
 # AWS codecommit support using AWS access key & secret key
